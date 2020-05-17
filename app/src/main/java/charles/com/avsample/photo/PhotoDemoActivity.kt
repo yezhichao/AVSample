@@ -1,6 +1,8 @@
 package charles.com.avsample.photo
 
+import android.Manifest
 import android.app.Activity
+import android.content.Intent
 import android.hardware.Camera
 import android.hardware.Camera.CameraInfo
 import android.net.Uri
@@ -12,9 +14,13 @@ import android.util.Log
 import android.view.OrientationEventListener
 import android.view.Surface
 import android.view.SurfaceHolder
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import charles.com.avsample.R
 import kotlinx.android.synthetic.main.activity_record_demo.*
+import pub.devrel.easypermissions.AfterPermissionGranted
+import pub.devrel.easypermissions.AppSettingsDialog
+import pub.devrel.easypermissions.EasyPermissions
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
@@ -24,10 +30,11 @@ import java.util.*
 import javax.security.auth.callback.Callback
 
 
-class PhotoDemoActivity : AppCompatActivity() {
+class PhotoDemoActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
 
     companion object {
         private const val TAG = "RecordDemoActivity"
+        private const val RC_CAMERA_AND_STORAGE = 100
     }
 
     private lateinit var surfaceHolder: SurfaceHolder
@@ -99,6 +106,43 @@ class PhotoDemoActivity : AppCompatActivity() {
     }
 
     /**
+     * Activity的方法，把权限请求结果给EasyPermissions去处理
+     */
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        // 把申请权限结果给EasyPermissions
+        EasyPermissions.onRequestPermissionsResult(requestCode, permissions, grantResults, this);
+    }
+
+    /**
+     * 有权限被拒绝，如果是点了不再提醒，会提示用户去设置打开权限，AppSettingsDialog可以定制
+     */
+    override fun onPermissionsDenied(requestCode: Int, perms: MutableList<String>) {
+        Log.d(TAG, "onPermissionsDenied:" + requestCode + ":" + perms.size)
+        if (EasyPermissions.somePermissionPermanentlyDenied(this, perms)) {
+            AppSettingsDialog.Builder(this).build().show();
+        }
+    }
+
+    /**
+     * 从设置权限页面返回，这里由于返回时自动会回调surfaceCreated去检查权限，这里可以什么都不做
+     */
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == AppSettingsDialog.DEFAULT_SETTINGS_REQ_CODE) {
+            // 从设置权限页面返回
+            Toast.makeText(this, "从设置权限页面返回", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * 有权限被允许，就是个回调，这里可以不做事情
+     */
+    override fun onPermissionsGranted(requestCode: Int, perms: MutableList<String>) {
+        Log.d(TAG, "onPermissionsGranted:" + requestCode + ":" + perms.size)
+    }
+
+    /**
      * 停止预览并释放摄像头
      */
     private fun stopPreviewAndReleaseCamera() {
@@ -111,50 +155,61 @@ class PhotoDemoActivity : AppCompatActivity() {
      * 初始化SurfaceView
      */
     private fun initSurfaceView() {
-        surfaceHolder = previewSurfaceView.holder
-        surfaceHolder.addCallback(object : Callback, SurfaceHolder.Callback {
-            override fun surfaceChanged(
-                holder: SurfaceHolder?, format: Int, width: Int, height: Int
-            ) {
-                Log.d(TAG, "surfaceChanged holder $holder, format $format, width $width, height $height")
-                try {
-                    openCamera()
-                } catch (e: IOException) {
-                    Log.e(TAG, "preview error $e")
+            // 已经有权限
+            surfaceHolder = previewSurfaceView.holder
+            surfaceHolder.addCallback(object : Callback, SurfaceHolder.Callback {
+                override fun surfaceChanged(
+                    holder: SurfaceHolder?, format: Int, width: Int, height: Int
+                ) {
+                    Log.d(TAG, "surfaceChanged holder $holder, format $format, width $width, height $height")
+                    try {
+                        openCamera()
+                    } catch (e: IOException) {
+                        Log.e(TAG, "preview error $e")
+                    }
                 }
-            }
 
-            override fun surfaceDestroyed(holder: SurfaceHolder?) {
-                Log.d(TAG, " surfaceChanged holder $holder")
-                camera?.apply {
-                    // 记得disable OrientationEventListener，否则在Camera release之后再去操作camera会抛异常
-                    mOrientationListener.disable()
-                    stopPreview()
-                    release()
+                override fun surfaceDestroyed(holder: SurfaceHolder?) {
+                    Log.d(TAG, " surfaceDestroyed holder $holder")
+                    camera?.apply {
+                        // 记得disable OrientationEventListener，否则在Camera release之后再去操作camera会抛异常
+                        mOrientationListener.disable()
+                        stopPreview()
+                        release()
+                    }
                 }
-            }
 
-            override fun surfaceCreated(holder: SurfaceHolder?) {
-                Log.d(TAG, "surfaceCreated holder $holder")
-                frontCamera = findFrontCamera()
-                backCamera = findBackCamera()
-                // 默认使用前置摄像头
-                cameraId = frontCamera
-            }
-        })
+                override fun surfaceCreated(holder: SurfaceHolder?) {
+                    Log.d(TAG, "surfaceCreated holder $holder")
+                    frontCamera = findFrontCamera()
+                    backCamera = findBackCamera()
+                    // 默认使用前置摄像头
+                    cameraId = frontCamera
+                }
+            })
     }
 
     /**
      * 打开摄像头预览
      */
+    @AfterPermissionGranted(RC_CAMERA_AND_STORAGE)
     private fun openCamera() {
-        camera = Camera.open(cameraId)
-        cameraParams = camera.parameters
-        // 设置角度
-        setCameraDisplayOrientation(this@PhotoDemoActivity, frontCamera, camera)
-        camera.setPreviewDisplay(surfaceHolder) // 通过surfaceView显示取景画面
-        camera.startPreview() // 开始预览
-        mOrientationListener.enable()
+        val perms = arrayOf(Manifest.permission.CAMERA, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        Log.d(TAG, "openCamera hasPermissions ${EasyPermissions.hasPermissions(this, *perms)}")
+        if (EasyPermissions.hasPermissions(this, *perms)) {
+            camera = Camera.open(cameraId)
+            cameraParams = camera.parameters
+            // 设置角度
+            setCameraDisplayOrientation(this@PhotoDemoActivity, frontCamera, camera)
+            camera.setPreviewDisplay(surfaceHolder) // 通过surfaceView显示取景画面
+            camera.startPreview() // 开始预览
+            mOrientationListener.enable()
+        } else {
+            EasyPermissions.requestPermissions(
+                this, "应用需要相机/存储权限来预览/存储您的照片",
+                RC_CAMERA_AND_STORAGE, *perms
+            );
+        }
     }
 
     /**
